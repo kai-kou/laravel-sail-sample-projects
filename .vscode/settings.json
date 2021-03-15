@@ -1,0 +1,4 @@
+{
+    "phpunit.command": "vendor/bin/sail exec laravel.test",
+    "phpunit.phpunit": "vendor/bin/phpunit"
+}
