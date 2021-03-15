@@ -21,6 +21,7 @@
         "fakerphp/faker": "^1.9.1",
         "laravel/breeze": "^1.1",
         "laravel/sail": "^1.0.1",
+        "matt-allan/laravel-code-style": "^0.6.0",
         "mockery/mockery": "^1.4.2",
         "nunomaduro/collision": "^5.0",
         "phpunit/phpunit": "^9.3.3"
