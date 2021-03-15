@@ -1,0 +1,4 @@
+{
+    "php-cs-fixer.executable": "vendor/bin/sail exec -T laravel.test vendor/bin/php-cs-fixer",
+    "php-cs-fixer.allowRisky": true
+}
