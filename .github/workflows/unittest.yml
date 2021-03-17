@@ -15,6 +15,19 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    services:
+      mysql:
+        image: mysql:5.7
+        ports:
+          - 3306:3306
+        env:
+          MYSQL_ROOT_PASSWORD:
+          MYSQL_DATABASE: application
+          MYSQL_USER: root
+          MYSQL_PASSWORD:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+        options: --health-cmd "mysqladmin ping -h localhost" --health-interval 20s --health-timeout 10s --health-retries 10
+
     steps:
     - uses: actions/checkout@v2
     - name: cache vendor
@@ -32,17 +45,11 @@ jobs:
       run: cp .env.example .env
     - name: generate key
       run: php artisan key:generate
-    - name: Create Database
-      run: |
-        mkdir -p database
-        touch database/database.sqlite
     - name: migrate
       run: php artisan migrate
       env:
-        DB_CONNECTION: sqlite
-        DB_DATABASE: database/database.sqlite
+        DB_HOST: 127.0.0.1
     - name: Execute tests (Unit and Feature tests) via PHPUnit
       env:
-        DB_CONNECTION: sqlite
-        DB_DATABASE: database/database.sqlite
+        DB_HOST: 127.0.0.1
       run: vendor/bin/phpunit
