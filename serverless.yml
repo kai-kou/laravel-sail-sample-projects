@@ -1,0 +1,261 @@
+service: laravel
+
+provider:
+  name: aws
+  # The AWS region in which to deploy (us-east-1 is the default)
+  region: ap-northeast-1
+  # The stage of the application, e.g. dev, production, staging… ('dev' is the default)
+  stage: dev
+  runtime: provided.al2
+  # environment:
+  #   DB_PORT: ${self:custom.environments.DB_PORT}
+  #   # DB_HOST: !GetAtt RDSProxy.Endpoint
+  #   DB_HOST: !GetAtt DBCluster.Endpoint.Address
+
+custom:
+  defaultStage: dev
+  profiles:
+    dev: sls-itg
+    stg: sls-stg
+    prd: sls-prd
+  environments: ${file(./config/config.${opt:stage, self:custom.defaultStage}.yml)}
+  secret: ${file(./config/secret/.secret.${opt:stage, self:custom.defaultStage}.yml)}
+
+package:
+  # Directories to exclude from deployment
+  exclude:
+    - node_modules/**
+    - public/storage
+    - resources/assets/**
+    - storage/**
+    - tests/**
+
+functions:
+  # This function runs the Laravel website/API
+  web:
+    handler: public/index.php
+    timeout: 28 # in seconds (API Gateway has a timeout of 29 seconds)
+    layers:
+      - ${bref:layer.php-74-fpm}
+    events:
+      - httpApi: "*"
+      # This function lets us run artisan commands in Lambda
+    vpc:
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetC
+    environment:
+      DB_PORT: ${self:custom.environments.DB_PORT}
+      # DB_HOST: !GetAtt RDSProxy.Endpoint
+      DB_HOST: !GetAtt DBCluster.Endpoint.Address
+      DB_PASSWORD: ${self:custom.secret.PASSWORD}
+
+  artisan:
+    handler: artisan
+    timeout: 120 # in seconds
+    layers:
+      - ${bref:layer.php-74} # PHP
+      - ${bref:layer.console} # The "console" layer
+    vpc:
+      securityGroupIds:
+        - !Ref LambdaSecurityGroup
+      subnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetC
+    environment:
+      DB_PORT: ${self:custom.environments.DB_PORT}
+      # DB_HOST: !GetAtt RDSProxy.Endpoint
+      DB_HOST: !GetAtt DBCluster.Endpoint.Address
+      DB_PASSWORD: ${self:custom.secret.PASSWORD}
+
+plugins:
+  # We need to include the Bref plugin
+  - ./vendor/bref/bref
+  # - serverless-pseudo-parameters
+
+resources:
+  Resources:
+    # The S3 bucket that stores the assets
+    Assets:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.environments.AWS_BUCKET}
+    # The policy that makes the bucket publicly readable
+    AssetsBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref Assets # References the bucket we defined above
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal: "*" # everyone
+              Action: "s3:GetObject" # to read
+              Resource: !Join ["/", [!GetAtt Assets.Arn, "*"]] # things in the bucket
+              # alternatively you can write out Resource: 'arn:aws:s3:::<bucket-name>/*'
+    ## VPC Resource
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.0.0.0/24
+        Tags:
+          - { Key: Name, Value: Sample VPC }
+    PrivateSubnetA:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: 10.0.0.0/25
+        AvailabilityZone: ap-northeast-1a
+        Tags:
+          - { Key: Name, Value: Sample Private A }
+    PrivateSubnetC:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: 10.0.0.128/25
+        AvailabilityZone: ap-northeast-1c
+        Tags:
+          - { Key: Name, Value: Sample Private C }
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Lambda Functions
+        VpcId: !Ref VPC
+        Tags:
+          - Key: "Name"
+            Value: "LambdaSecurityGroup"
+    AuroraSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: SecurityGroup for Aurora
+        VpcId: !Ref VPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: ${self:custom.environments.DB_PORT}
+            ToPort: ${self:custom.environments.DB_PORT}
+            CidrIp: 10.0.0.0/24
+        Tags:
+          - Key: "Name"
+            Value: "AuroraSecurityGroup"
+      DependsOn: VPC
+    ## RDS Resource
+    DBSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: "SampleDB subnet group"
+        DBSubnetGroupName: sampledb-subnet-group
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetC
+    DBCluster:
+      Type: AWS::RDS::DBCluster
+      Properties:
+        DatabaseName: ${self:custom.environments.DB_DATABASE}
+        Engine: aurora-mysql
+        EngineMode: serverless
+        MasterUsername: ${self:custom.secret.USER_NAME}
+        MasterUserPassword: ${self:custom.secret.PASSWORD}
+        DBClusterParameterGroupName: !Ref DBClusterParameterGroup
+        DBSubnetGroupName: !Ref DBSubnetGroup
+        VpcSecurityGroupIds:
+          - !Ref AuroraSecurityGroup
+      DependsOn: DBSubnetGroup
+    DBClusterParameterGroup:
+      Type: AWS::RDS::DBClusterParameterGroup
+      Properties:
+        Description: A parameter group for aurora
+        Family: aurora-mysql5.7
+        Parameters:
+          time_zone: "Asia/Tokyo"
+          character_set_client: "utf8"
+          character_set_connection: "utf8"
+          character_set_database: "utf8"
+          character_set_results: "utf8"
+          character_set_server: "utf8"
+    # Aurora Serverlessの場合は不要
+    # DBInstance1:
+    #   Type: AWS::RDS::DBInstance
+    #   Properties:
+    #     DBClusterIdentifier: !Ref DBCluster
+    #     DBSubnetGroupName: !Ref DBSubnetGroup
+    #     Engine: aurora-mysql
+    #     DBInstanceClass: db.t3.medium
+    #   DependsOn: DBCluster
+    AuroraSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: Sample/aurora
+        SecretString: '{"username":"${self:custom.secret.USER_NAME}", "password":"${self:custom.secret.PASSWORD}"}'
+    SecretTargetAttachment:
+      Type: AWS::SecretsManager::SecretTargetAttachment
+      Properties:
+        SecretId: !Ref AuroraSecret
+        TargetId: !Ref DBCluster
+        TargetType: "AWS::RDS::DBCluster"
+      DependsOn: DBCluster
+    # Aurora ServerlessだとRDSProxyは使えない
+    # https://docs.aws.amazon.com/ja_jp/AmazonRDS/latest/AuroraUserGuide/rds-proxy.html#rds-proxy.limitations
+    # ProxyRole:
+    #   Type: AWS::IAM::Role
+    #   Properties:
+    #     RoleName: sample-proxy-role
+    #     AssumeRolePolicyDocument:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Effect: Allow
+    #           Principal:
+    #             Service:
+    #               - "rds.amazonaws.com"
+    #           Action:
+    #             - "sts:AssumeRole"
+    #     Path: /
+    #   DependsOn: DBCluster
+    # ProxyRolePolicies:
+    #   Type: "AWS::IAM::Policy"
+    #   Properties:
+    #     PolicyName: RdsProxyPolicy
+    #     PolicyDocument:
+    #       Version: "2012-10-17"
+    #       Statement:
+    #         - Effect: Allow
+    #           Action:
+    #             - "secretsmanager:GetResourcePolicy"
+    #             - "secretsmanager:GetSecretValue"
+    #             - "secretsmanager:DescribeSecret"
+    #             - "secretsmanager:ListSecretVersionIds"
+    #           Resource:
+    #             - !Ref AuroraSecret
+    #         - Effect: Allow
+    #           Action:
+    #             - "kms:Decrypt"
+    #           Resource: "arn:aws:kms:${self:provider.region}:#{AWS::AccountId}:key/*"
+    #           Condition:
+    #             StringEquals:
+    #               kms:ViaService: "secretsmanager.${self:provider.region}.amazonaws.com"
+    #     Roles:
+    #       - Ref: ProxyRole
+    #   DependsOn: AuroraSecret
+    # RDSProxy:
+    #   Type: AWS::RDS::DBProxy
+    #   Properties:
+    #     DBProxyName: SampleAuroraProxy
+    #     Auth:
+    #       - SecretArn: !Ref AuroraSecret
+    #     VpcSecurityGroupIds:
+    #       - !Ref AuroraSecurityGroup
+    #     VpcSubnetIds:
+    #       - !Ref PrivateSubnetA
+    #       - !Ref PrivateSubnetC
+    #     EngineFamily: MYSQL
+    #     RequireTLS: false
+    #     RoleArn: !GetAtt ProxyRole.Arn
+    #   DependsOn: AuroraSecret
+    # DBProxyTargetGroup:
+    #   Type: AWS::RDS::DBProxyTargetGroup
+    #   Properties:
+    #     TargetGroupName: default
+    #     DBProxyName: !Ref RDSProxy
+    #     DBClusterIdentifiers:
+    #       - !Ref DBCluster
+    #   DependsOn: RDSProxy
