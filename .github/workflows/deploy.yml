@@ -26,6 +26,11 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       run: composer install -n --prefer-dist
 
+    - name: copy .env
+      run: cp .env.example .env
+    - name: generate key
+      run: php artisan key:generate
+
     - name: Setup Node.js
       uses: actions/setup-node@v1
       with:
