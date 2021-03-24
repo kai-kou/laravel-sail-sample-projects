@@ -50,15 +50,9 @@ jobs:
 
     - name: Deploy to Lambda
       run: sls deploy
-      # env:
-      #   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     - name: Migrate
       run: vendor/bin/bref cli --region=ap-northeast-1 laravel-dev-artisan -- migrate
-      # env:
-      #   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      #   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     - name: S3 sync
       run: aws s3 sync public s3://kai-laravel-test/public --delete
