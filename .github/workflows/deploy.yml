@@ -61,5 +61,4 @@ jobs:
       #   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
     - name: S3 sync
-      working-directory: static-files
       run: aws s3 sync public s3://kai-laravel-test/public --delete
